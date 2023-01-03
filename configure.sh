@@ -10,6 +10,7 @@ TXADMIN_INSTALLED=false
 
 #### CHange These ####
 SERVERNAME="fivem-col-dev"
+GAME_PORT=30150
 TXADMIN_PORT=40150
 ######################
 
@@ -95,13 +96,12 @@ echo "Updating Repositories"
 yum update >>setup.log 2>>error.log
 
 echo "Installing PreReqs"
-if ! isinstalled ntpdate; then
-   yum install -y tar git nano wget npm >>setup.log 2>>error.log
-   systemctl start chrnoyd && systemctl enable chrnoyd >>setup.log 2>>error.log
-   echo 0.us.pool.ntp.org \n1.us.pool.ntp.org \n2.us.pool.ntp.org >>/etc/chrony.conf >>setup.log 2>>error.log
-   systemctl restart chrnoyd >>setup.log 2>>error.log
-fi
-systemctl start chrnoyd
+yum install -y tar git nano wget npm chrony lsof >>setup.log 2>>error.log
+#systemctl start chronyd && systemctl enable chrnoyd >>setup.log 2>>error.log
+echo 0.us.pool.ntp.org \n1.us.pool.ntp.org \n2.us.pool.ntp.org >>/etc/chrony.conf
+systemctl restart chronyd >>setup.log 2>>error.log
+systemctl start pmlogger && systemctl enable pmlogger >>setup.log 2>>error.log
+
 if ! isinstalled epel-release; then
    echo "Installing epel-release"
    yum install -y epel-release >>setup.log 2>>error.log
@@ -161,7 +161,11 @@ if ! [ -x "$(command -v tuned-adm)" ]; then
    cpupower frequency-set -g performance >>setup.log 2>>error.log
 fi
 
-if [ $INSTALL_FIVEM == true ]; then
+if [ $INSTALL_FIVEM ]; then
+   echo "Creating FiveM users and groups"
+   groupadd devs
+   useradd -g devs fivem
+   usermod -aG fivem fivem
    echo "Creating directory structure"
    if [[ -d /home/fivem ]]; then
       if [[ -d /home/fivem/fx-server ]]; then
@@ -192,13 +196,17 @@ if [ $INSTALL_FIVEM == true ]; then
    echo "Cleaning up downloads"
    rm fx.tar.xz >>setup.log 2>>error.log
 
+   echo "Setting permissions"
+   chown -R fivem:devs /home/fivem/ >>setup.log 2>>error.log
+   chmod -R 2775 /home/fivem/ >>setup.log 2>>error.log
+
    if ! [ -f /home/fivem/fx-server/start.sh ]; then
       echo "Installing PM2"
       npm install -g pm2 >>setup.log 2>>error.log
       touch /home/fivem/fx-server/start.sh >>setup.log 2>>error.log
-      echo "./run.sh +set serverProfile $MAINDB +set txAdminPort $TXADMIN_PORT" >>/home/fivem/fx-server/start.sh >>setup.log 2>>error.log
-      cd /home/fivem/fx-server/ && pm2 start startup.sh --name fivem >>setup.log 2>>error.log
-      pm2 startup && pm2 save
+      echo run.sh +set serverProfile $MAINDB +set txAdminPort $TXADMIN_PORT >/home/fivem/fx-server/start.sh
+      su fivem && cd /home/fivem/fx-server/ && pm2 start startup.sh --name fivem >>setup.log 2>>error.log
+      su fivem && cd /home/fivem/fx-server/ && fivem && pm2 startup && pm2 save >>setup.log 2>>error.log
    fi
    TXADMIN_INSTALLED=true
 fi
@@ -237,21 +245,35 @@ fi
 
 echo "Configuring firewall"
 firewall-cmd --zone=public --permanent --add-port=3306/tcp >>setup.log 2>>error.log
-firewall-cmd --zone=public --permanent --add-port=30120/tcp >>setup.log 2>>error.log
-firewall-cmd --zone=public --permanent --add-port=30120/udp >>setup.log 2>>error.log
-firewall-cmd --zone=public --permanent --add-port=40120/tcp >>setup.log 2>>error.log
+firewall-cmd --zone=public --permanent --add-port=$GAME_PORT/tcp >>setup.log 2>>error.log
+firewall-cmd --zone=public --permanent --add-port=$GAME_PORT/udp >>setup.log 2>>error.log
+firewall-cmd --zone=public --permanent --add-port=$TXADMIN_PORT/tcp >>setup.log 2>>error.log
+firewall-cmd --permanent --add-service=ntp >>setup.log 2>>error.log
 firewall-cmd --reload >>setup.log 2>>error.log
+
+EXTIP="$(curl -s 'http://whatismyip.akamai.com/')"
+SITEIP="$(echo -e "${IPADDY}" | tr -d '[:space:]')"
 
 echo "================================================================="
 echo ""
 echo "Installation has completed!!"
-echo "Browse to IP address of this AlmaServer Used for Installation"
+echo "Links will be below where applicable"
 echo ""
-SITEIP="$(echo -e "${IPADDY}" | tr -d '[:space:]')"
-SITEADDR= echo "https://$SERVERNAME.pushingstart.com:9090"
-SITEIP= echo "https://$SITEIP:9090"
+if lsof -Pi :9090 -sTCP:LISTEN -t >/dev/null; then
+   echo "Cockpit control panel available at the following address"
+   echo "https://$SERVERNAME.pushingstart.com:9090"
+   echo "https://$SITEIP:9090"
+fi
 echo ""
 echo "DB Username: $MAINDB_USER"
 echo "DB Token: $PASSWDDB"
 echo ""
+if lsof -Pi :$TXADMIN_PORT -sTCP:LISTEN -t >/dev/null; then
+   echo "txAdmin control panel available at the following address"
+   echo "http://$EXTIP":"$TXADMIN_PORT"
+   echo "http://$SITEIP":"$TXADMIN_PORT"
+   echo ""
+fi
 echo "================================================================="
+echo ""
+echo ""
